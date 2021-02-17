@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:file="http://www.mulesoft.org/schema/mule/file"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+	<configuration-properties doc:name="Configuration properties" doc:id="d761dbb1-ed94-4f07-8f04-0cdacd86953d" file="config.properties" />
+	<file:config name="File_Config" doc:name="File Config" doc:id="6a5e7e76-c50e-40e0-9486-bc15f530bf35" >
+		<file:connection workingDir="${fs.workingdir}" />
+	</file:config>
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="8098afe3-1847-49c4-9cc7-38d6d56589c8" >
+		<db:generic-connection url="jdbc:sqlite:/Users/apace/training-test.db" driverClassName="org.sqlite.JDBC" />
+	</db:config>
+	<flow name="txImport" doc:id="fcfe1c02-04fa-4bdc-b419-0449d3fb504d" >
+		<file:listener doc:name="On New or Updated File" doc:id="af758ef3-c4d7-4346-9319-68afb421d375" config-ref="File_Config" recursive="false" moveToDirectory="${fs.workingdir}${fs.processeddir}" renameTo="#[%dw 2.0
+import * from dw::core::Strings
+var filename = if(!isEmpty(attributes) and !isEmpty(attributes.fileName)) attributes.fileName as String else 'NONAME.csv'
+var suffix = now() as String {format: &quot;yyyyMMddHHmmssSSS&quot;}
+var name = substringBefore(filename, '.')
+var extension = substringAfter(filename, '.')
+---
+name ++ '_' ++ suffix ++ '.' ++ extension]">
+			<scheduling-strategy >
+				<cron expression="${fs.check.cron.expression}" timeZone="${fs.timezone}"/>
+			</scheduling-strategy>
+			<file:matcher directories="EXCLUDE" symLinks="EXCLUDE" filenamePattern="transactions.csv"/>
+		</file:listener>
+		<set-variable value='#[output application/java&#10;---&#10;payload]' doc:name="rows" doc:id="60fc88d9-695c-4555-af81-a0cadec6406a" variableName="rows"/>
+		<logger level="INFO" doc:name="Log the full payload" doc:id="1b41d66c-8812-44f9-9aa8-c6599c8ba9a3" message="The payload is #[vars.rows]"/>
+		<foreach doc:name="For Each record" doc:id="64e120fa-1d82-4326-b144-7385f9b5ca9d" collection="#[vars.rows]">
+			<try doc:name="Try to insert" doc:id="2bf67dbe-e963-41ac-b514-e94557c150e7">
+				<set-variable value="#[payload]" doc:name="txRow" doc:id="52ff23c2-0364-4183-939b-ee6f834ec769" variableName="txRow" />
+				<logger level="INFO" doc:name="Log the single record" doc:id="6554affc-643e-41f8-ae58-599028b9d4a4" message="#[vars.txRow]" />
+				<choice doc:name="Choice" doc:id="2a8e6735-b1dd-4788-ac1a-f07a9bb3da52" >
+					<when expression="#[!isEmpty(vars.txRow)]">
+						<db:insert doc:name="Insert into TRANSACTION table" doc:id="13f834c6-6b33-4a4a-ac65-f21bc65aeed0" config-ref="Database_Config">
+				<db:sql><![CDATA[${db.transaction.insert}]]></db:sql>
+				<db:input-parameters><![CDATA[#[{
+	orderNo: if(!isEmpty(vars.txRow.'order_no')) vars.txRow.'order_no' else null,
+	orderDate: vars.txRow.'order_date',
+	lineNo: vars.txRow.'line_no',
+	itemNo: vars.txRow.'item_no',
+	itemDescription: vars.txRow.'item_description',
+	size: vars.txRow.'size',
+	quantity: vars.txRow.'quantity',
+	unitPriceEur: vars.txRow.'unit_price_eur',
+	unitPriceForeign: vars.txRow.'unit_price_foreign',
+	currency: vars.txRow.'currency',
+	exchangeRate: vars.txRow.'exchange_rate',
+	salespersonNo: vars.txRow.'salesperson_no',
+	salespersonName: vars.txRow.'salesperson_name',
+	customerNo: vars.txRow.'customer_no',
+	customerName: vars.txRow.'customer_name',
+	countryCode: vars.txRow.'country_code'
+}]]]></db:input-parameters>
+			</db:insert>
+					</when>
+				</choice>
+				<error-handler >
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="77655012-3800-49d8-bf63-25307b3e8b0f" >
+						<logger level="ERROR" doc:name="Log error" doc:id="c23c7864-0e3a-4bc6-997e-03726fb810c1" message="An error occured trying to insert #[payload]" />
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</foreach>
+	</flow>
+</mule>
