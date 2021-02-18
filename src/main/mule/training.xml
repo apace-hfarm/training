@@ -12,57 +12,155 @@ http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/cu
 	<db:config name="Database_Config" doc:name="Database Config" doc:id="8098afe3-1847-49c4-9cc7-38d6d56589c8" >
 		<db:generic-connection url="jdbc:sqlite:/Users/apace/training-test.db" driverClassName="org.sqlite.JDBC" />
 	</db:config>
-	<flow name="txImport" doc:id="fcfe1c02-04fa-4bdc-b419-0449d3fb504d" >
+	<flow name="txImport" doc:id="fcfe1c02-04fa-4bdc-b419-0449d3fb504d">
 		<file:listener doc:name="On New or Updated File" doc:id="af758ef3-c4d7-4346-9319-68afb421d375" config-ref="File_Config" recursive="false" moveToDirectory="${fs.workingdir}${fs.processeddir}" renameTo="#[%dw 2.0
 import * from dw::core::Strings
-var filename = if(!isEmpty(attributes) and !isEmpty(attributes.fileName)) attributes.fileName as String else 'NONAME.csv'
+var filename = 'transactions.csv'
 var suffix = now() as String {format: &quot;yyyyMMddHHmmssSSS&quot;}
 var name = substringBefore(filename, '.')
 var extension = substringAfter(filename, '.')
 ---
 name ++ '_' ++ suffix ++ '.' ++ extension]">
-			<scheduling-strategy >
-				<cron expression="${fs.check.cron.expression}" timeZone="${fs.timezone}"/>
+			<scheduling-strategy>
+				<cron expression="${fs.check.cron.expression}" timeZone="${fs.timezone}" />
 			</scheduling-strategy>
-			<file:matcher directories="EXCLUDE" symLinks="EXCLUDE" filenamePattern="transactions.csv"/>
+			<file:matcher directories="EXCLUDE" symLinks="EXCLUDE" filenamePattern="transactions.csv" />
 		</file:listener>
-		<set-variable value='#[output application/java&#10;---&#10;payload]' doc:name="rows" doc:id="60fc88d9-695c-4555-af81-a0cadec6406a" variableName="rows"/>
-		<logger level="INFO" doc:name="Log the full payload" doc:id="1b41d66c-8812-44f9-9aa8-c6599c8ba9a3" message="The payload is #[vars.rows]"/>
-		<foreach doc:name="For Each record" doc:id="64e120fa-1d82-4326-b144-7385f9b5ca9d" collection="#[vars.rows]">
-			<try doc:name="Try to insert" doc:id="2bf67dbe-e963-41ac-b514-e94557c150e7">
-				<set-variable value="#[payload]" doc:name="txRow" doc:id="52ff23c2-0364-4183-939b-ee6f834ec769" variableName="txRow" />
-				<logger level="INFO" doc:name="Log the single record" doc:id="6554affc-643e-41f8-ae58-599028b9d4a4" message="#[vars.txRow]" />
-				<choice doc:name="Choice" doc:id="2a8e6735-b1dd-4788-ac1a-f07a9bb3da52" >
-					<when expression="#[!isEmpty(vars.txRow)]">
-						<db:insert doc:name="Insert into TRANSACTION table" doc:id="13f834c6-6b33-4a4a-ac65-f21bc65aeed0" config-ref="Database_Config">
-				<db:sql><![CDATA[${db.transaction.insert}]]></db:sql>
-				<db:input-parameters><![CDATA[#[{
-	orderNo: if(!isEmpty(vars.txRow.'order_no')) vars.txRow.'order_no' else null,
-	orderDate: vars.txRow.'order_date',
-	lineNo: vars.txRow.'line_no',
-	itemNo: vars.txRow.'item_no',
-	itemDescription: vars.txRow.'item_description',
-	size: vars.txRow.'size',
-	quantity: vars.txRow.'quantity',
-	unitPriceEur: vars.txRow.'unit_price_eur',
-	unitPriceForeign: vars.txRow.'unit_price_foreign',
-	currency: vars.txRow.'currency',
-	exchangeRate: vars.txRow.'exchange_rate',
-	salespersonNo: vars.txRow.'salesperson_no',
-	salespersonName: vars.txRow.'salesperson_name',
-	customerNo: vars.txRow.'customer_no',
-	customerName: vars.txRow.'customer_name',
-	countryCode: vars.txRow.'country_code'
+		<set-variable value="#[output application/java
+---
+payload]" doc:name="rows" doc:id="60fc88d9-695c-4555-af81-a0cadec6406a" variableName="rows" />
+		<logger level="INFO" doc:name="Log the full payload" doc:id="1b41d66c-8812-44f9-9aa8-c6599c8ba9a3" message="The payload is #[vars.rows]" />
+		<flow-ref doc:name="setDistinctObjectCollections" doc:id="5c5b3c9a-5edf-4381-b085-5d83b74e39d2" name="setDistinctObjectCollections" />
+		<scatter-gather doc:name="Scatter-Gather" doc:id="953aa97f-ea33-4be4-8365-42ed62a96c45">
+			<route>
+				<flow-ref doc:name="upsertProducts" doc:id="aebd98bb-68a9-422f-a21a-7f1ce915d904" name="upsertProducts" />
+			</route>
+			<route>
+				<flow-ref doc:name="upsertSalesperson" doc:id="e7fc38db-bb53-4a99-b850-7d8d8fe569c9" name="upsertSalesperson" />
+			</route>
+			<route>
+				<flow-ref doc:name="upsertCustomers" doc:id="f2fbbeed-5b50-4466-a85a-e848d29e56e3" name="upsertCustomers" />
+			</route>
+		</scatter-gather>
+		<flow-ref doc:name="upsertOrders" doc:id="96933014-29ec-4dcc-8b8a-cf5406896eaf" name="upsertOrders" />
+		<flow-ref doc:name="upsertOrderItems" doc:id="24a5c01e-6eae-4775-a044-662b0e0ef536" name="upsertOrderItems" />
+	</flow>
+	<sub-flow name="setDistinctObjectCollections" doc:id="b84aa7cf-e524-4aee-9c95-26383cb16170">
+		<set-variable value="#[output application/json&#10;---&#10;vars.rows map {&#10;  'order_no': $.order_no,&#10;  'order_date': $.order_date,&#10;  'salesperson_no': $.salesperson_no,&#10;  'customer_no': $.customer_no,&#10;  'currency': $.currency,&#10;  'exchange_rate': $.exchange_rate,&#10;  'country_code': $.country_code&#10;} distinctBy ($.order_no)]" doc:name="orderCollection" doc:id="f2674ebd-64a4-4c57-b43d-da17e903671a" variableName="orderCollection" />
+		<set-variable value="#[output application/json&#10;---&#10;vars.rows map {&#10;  'order_no': $.order_no,&#10;  'line_no': $.line_no,&#10;    'item_no': $.item_no,&#10;    'size': $.size,&#10;    'quantity': $.quantity,&#10;    'unit_price_eur': $.unit_price_eur,&#10;    'unit_price_foreign': $.unit_price_foreign&#10;} distinctBy ($.order_no ++ $.line_no)]" doc:name="orderItemCollection" doc:id="98d95c42-0107-4e24-8644-8eda2e6a4540" variableName="orderItemCollection" />
+		<set-variable value="#[output application/json&#10;---&#10;vars.rows map {&#10;    'item_no': $.item_no,&#10;    'item_description': $.item_description,&#10;    'size': $.size,&#10;    'unit_price_eur': $.unit_price_eur&#10;} distinctBy ($.item_no ++ $.size)]" doc:name="productCollection" doc:id="478a47a2-bc9e-4bed-adfc-d1ce295ce2c3" variableName="productCollection" />
+		<set-variable value="#[output application/json&#10;---&#10;vars.rows map {&#10;    'customer_no': $.customer_no,&#10;    'customer_name': $.customer_name&#10;} distinctBy ($.customer_no)]" doc:name="customerCollection" doc:id="cab2230c-0911-40f4-8e5b-65e231b0b8d4" variableName="customerCollection" />
+		<set-variable value="#[output application/json&#10;---&#10;vars.rows map {&#10;    'salesperson_no': $.salesperson_no,&#10;    'salesperson_name': $.salesperson_name&#10;} distinctBy ($.salesperson_no)]" doc:name="salespersonCollection" doc:id="86328756-ba7b-4c39-9c91-86064a5098fe" variableName="salespersonCollection" />
+		<logger level="INFO" doc:name="Log variables" doc:id="42fc75a8-a30f-43d5-ab82-69a0ab2502db" message="The collection are: #[vars.productCollection] - #[vars.salespersonCollection] - #[vars.customerCollection] - #[vars.orderCollection] - #[vars.orderItemCollection]"/>
+	</sub-flow>
+	<sub-flow name="upsertOrderItems" doc:id="d12f5288-f0dd-4950-9162-b9c92f92f06d">
+		<foreach doc:name="For Each OrderItem" doc:id="a7752047-ea95-4162-bb91-2f059f88b24d" collection="#[vars.orderItemCollection default []]">
+			<try doc:name="Try to upsert the ORDERITEM table" doc:id="ec4cee52-bbdb-4f07-9e62-fb8fbfe1a813">
+				<db:insert doc:name="Upsert the OrderItem table" doc:id="af70d256-79d3-4171-a4ac-b8c9ce8922f7" config-ref="Database_Config">
+					<db:sql><![CDATA[${db.orderitem.upsert}]]></db:sql>
+					<db:input-parameters><![CDATA[#[{
+	'orderNo': if(!isEmpty(payload.order_no)) payload.order_no else null,
+	'lineNo': if(!isEmpty(payload.line_no)) payload.line_no else null,
+	'itemNo': payload.item_no,
+	'size': payload.size,
+	'quantity': payload.quantity,
+	'unitPriceEur': payload.unit_price_eur,
+	'unitPriceForeign': payload.unit_price_foreign
 }]]]></db:input-parameters>
-			</db:insert>
-					</when>
-				</choice>
-				<error-handler >
-					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="77655012-3800-49d8-bf63-25307b3e8b0f" >
-						<logger level="ERROR" doc:name="Log error" doc:id="c23c7864-0e3a-4bc6-997e-03726fb810c1" message="An error occured trying to insert #[payload]" />
+				</db:insert>
+				<error-handler>
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="715ea2a6-d28b-4f3e-8500-83f68f58597b">
+						<flow-ref doc:name="logError" doc:id="ff50da65-dd55-4bfc-af33-ee9cf39cabd4" name="logError" />
 					</on-error-continue>
 				</error-handler>
 			</try>
 		</foreach>
-	</flow>
+		<logger level="INFO" doc:name="Logger" doc:id="12cdc656-60c5-49d4-a966-034d25e5fef2" message="Upsert orderItems completed"/>
+	</sub-flow>
+	<sub-flow name="upsertOrders" doc:id="8f942670-1f28-4381-a300-9845a3eb502d">
+		<foreach doc:name="For Each Order" doc:id="9a0ee1a7-bfd3-442c-a828-1f10c2119646" collection="#[vars.orderCollection default []]">
+			<try doc:name="Try to upsert the ORDER table" doc:id="eca99b15-20dc-4d99-9a57-117bd85b2379">
+				<db:insert doc:name="Upsert the Order table" doc:id="314ab682-e9de-4728-bccc-c299e5698644" config-ref="Database_Config">
+					<db:sql><![CDATA[${db.order.upsert}]]></db:sql>
+					<db:input-parameters><![CDATA[#[{
+	'orderNo': if(!isEmpty(payload.order_no)) payload.order_no else null,
+	'orderDate': payload.order_date,
+	'salespersonNo': payload.salesperson_no,
+	'customerNo': payload.customer_no,
+	'currency': payload.currency,
+	'exchangeRate': payload.exchange_rate,
+	'countryCode': payload.country_code
+}]]]></db:input-parameters>
+				</db:insert>
+				<error-handler>
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="9d99bbd4-5426-4643-99c2-b0de7bf56333">
+						<flow-ref doc:name="logError" doc:id="91950daa-f5ad-434f-909a-6696c29f43f6" name="logError" />
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</foreach>
+		<logger level="INFO" doc:name="Logger" doc:id="d39ee0fc-78dd-4e0a-a5e4-2f83d836b1f5" message="Upsert orders completed"/>
+	</sub-flow>
+	<sub-flow name="upsertCustomers" doc:id="51a36785-da5c-49f5-aad3-a427678aaceb">
+		<foreach doc:name="For Each Customer" doc:id="96a4a385-8fdc-4296-9dfb-97e8d66f4d8c" collection="#[vars.customerCollection default []]">
+			<try doc:name="Try to upsert the CUSTOMER table" doc:id="d4e797f0-0553-4b19-ae50-673bc31a7ba2">
+				<db:insert doc:name="Upsert the Customer table" doc:id="dc23dc43-ea36-4a06-a78a-6d56ea3094ea" config-ref="Database_Config">
+					<db:sql><![CDATA[${db.customer.upsert}]]></db:sql>
+					<db:input-parameters><![CDATA[#[{
+	customerNo: if(!isEmpty(payload.'customer_no')) payload.'customer_no' else null,
+	customerName: payload.'customer_name'
+}]]]></db:input-parameters>
+				</db:insert>
+				<error-handler>
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="d7d27435-7621-494f-bee9-a2802078e707">
+						<flow-ref doc:name="logError" doc:id="c43cbf55-736f-4abf-acf5-2886d46ae298" name="logError" />
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</foreach>
+		<logger level="INFO" doc:name="Logger" doc:id="6c25387a-fc28-47e7-9d69-24a37ca9ce73" message="Upsert customers completed"/>
+	</sub-flow>
+	<sub-flow name="upsertSalesperson" doc:id="acc67f19-77b9-4b45-88eb-90db99fcec52">
+		<foreach doc:name="For Each Salesperson" doc:id="0ac54461-af27-4d4a-9077-4c828df9fb14" collection="#[vars.salespersonCollection default []]">
+			<try doc:name="Try to upsert the SALESPERSON table" doc:id="027956f9-35ad-49f5-8d0e-9863b0c04655">
+				<db:insert doc:name="Upsert Salesperson table" doc:id="dbd1d0d7-4dcc-4f6d-bbd9-20f0afcfb067" config-ref="Database_Config">
+					<db:sql><![CDATA[${db.salesperson.upsert}]]></db:sql>
+					<db:input-parameters><![CDATA[#[{
+	salespersonNo: if(!isEmpty(payload.'salesperson_no')) payload.'salesperson_no' else null,
+	salespersonName: payload.'salesperson_name'
+}]]]></db:input-parameters>
+				</db:insert>
+				<error-handler>
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="89a065c1-8e1e-4d89-93a7-95f900d5f675">
+						<flow-ref doc:name="logError" doc:id="a79b94c6-8b50-4839-8fd2-a2cd494f5371" name="logError" />
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</foreach>
+		<logger level="INFO" doc:name="Logger" doc:id="ef9bdd9f-1829-4822-8954-020e00a4fdc8" message="Upsert Salesperson completed"/>
+	</sub-flow>
+	<sub-flow name="upsertProducts" doc:id="5a8e4810-1766-47bc-835e-c3de89bd1e84" >
+		<foreach doc:name="For Each Product" doc:id="dcbec1c8-ea04-448f-bc07-3fcd73f7eecb" collection="#[vars.productCollection default []]">
+			<try doc:name="Try to upsert the PRODUCT table" doc:id="0723c488-952b-4c94-96ec-b4f9099f54c8">
+				<db:insert doc:name="Upsert Product table" doc:id="37175c74-f5f5-4bfb-afca-18f1f6e948c1" config-ref="Database_Config">
+					<db:sql><![CDATA[${db.product.upsert}]]></db:sql>
+					<db:input-parameters><![CDATA[#[{
+	itemNo: if(!isEmpty(payload.'item_no')) payload.'item_no' else null,
+	itemDescription: payload.'item_description',
+	size:  if(!isEmpty(payload.'size')) payload.'size' else null,
+	unitPriceEur: payload.'unit_price_eur'
+}]]]></db:input-parameters>
+				</db:insert>
+				<error-handler>
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="a9780a1c-e02c-48f7-bee3-d10d7c288490">
+						<flow-ref doc:name="logError" doc:id="778d3865-2da3-457c-8dfb-4a7c2f484e10" name="logError" />
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</foreach>
+		<logger level="INFO" doc:name="Logger" doc:id="42b0ac40-40a1-4f2c-8726-1453a7649eed" message="Upsert Products completed"/>
+	</sub-flow>
+	<sub-flow name="logError" doc:id="b6ed81de-7439-4390-b0f6-8e202676549d" >
+		<logger level="ERROR" doc:name="Log error" doc:id="c23c7864-0e3a-4bc6-997e-03726fb810c1" message="An error occured trying to insert #[payload]" />
+	</sub-flow>
 </mule>
